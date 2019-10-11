@@ -1,0 +1,94 @@
+---
+tasks file for kubernete-cluster
+- hosts: all
+  gather_facts: false
+  become: yes
+  tasks:
+    - name: Include main vars
+      include_vars: "../vars/main.yml"
+
+    - name: Add docker GPG key
+      shell: "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -"
+
+    - name: Add docker repository
+      shell: 'echo "deb [arch=amd64] https://download.docker.com/linux/ubuntu xenial stable" >> /etc/apt/sources.list'
+
+    - name: Add kubernetes gpg key
+      shell: "curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -"
+
+    - name: Add kubernetes repository
+      copy:
+        src: ../files/kubernetes.list
+        dest: /etc/apt/sources.list.d/kubernetes.list
+
+    - name: Packaging
+      shell: "apt-get update"
+
+    - name: Installing Docker, Kubelet, Kubeadm and Kubectl
+      apt:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - docker-ce=18.06.1~ce~3-0~ubuntu
+        - kubelet=1.13.5-00
+        - kubeadm=1.13.5-00
+        - kubectl=1.13.5-00
+
+    - name: Hold the current version
+      shell: "sudo apt-mark hold docker-ce kubelet kubeadm kubectl"
+
+    - name: Ensure net.bridge.bridge-nf-call-iptables is set to 1
+      sysctl:
+        name: net.bridge.bridge-nf-call-iptables
+        value: 1
+        state: present
+
+- hosts: master 
+  gather_facts: false
+  tasks:
+
+    - name: Initializing the cluster
+      shell: "sudo kubeadm init --pod-network-cidr=10.244.0.0/16"
+      become: yes
+
+    - name: create .kube directory
+      become: yes
+      become_user: cloud_user
+      file:
+        path: $HOME/.kube
+        state: directory
+        mode: 0755
+
+    - name: copy admin.conf to user's kube config
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/cloud_user/.kube/config
+        remote_src: yes
+        owner: cloud_user
+      become: yes
+
+    - name: Apply Flannel CNI
+      shell: "kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml"
+      
+    - name: get join command
+      shell: kubeadm token create --print-join-command
+      register: join_command_raw
+      become: yes
+
+    - name: set join command
+      set_fact:
+        join_command: "{{ join_command_raw.stdout_lines[0] }}"
+
+    - debug:
+        var: hostvars
+
+- hosts: worker
+  become: yes
+  gather_facts: false
+  tasks:
+
+    - name: join cluster
+      shell: "{{ hostvars['kube-master'].join_command }}"
+
+
+ 

@@ -1,0 +1,6 @@
+[master]
+kube-master
+
+[worker]
+worker-node-1
+worker-node-2
